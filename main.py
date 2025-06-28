@@ -6,44 +6,34 @@ currentPos = np.zeros(nInst)
 def getMyPosition(prcSoFar):
     global currentPos
     (n, t) = prcSoFar.shape
-    if t < 21:
+    if t < 6:
         return np.zeros(n)
 
+    # === Mean and deviation over last 5 days ===
+    sma = np.mean(prcSoFar[:, -6:-1], axis=1)  # 5-day moving average
     price_today = prcSoFar[:, -1]
+    deviation = sma - price_today  # positive = underpriced, negative = overpriced
 
-    # === Momentum (20-day return) ===
-    momentum = prcSoFar[:, -1] / prcSoFar[:, -21] - 1
+    # === Volatility adjustment (standard deviation of last 5 returns) ===
+    returns = np.diff(np.log(prcSoFar[:, -6:]), axis=1)
+    vol = np.std(returns, axis=1) + 1e-6
 
-    # === Mean reversion: deviation from 5-day SMA ===
-    sma5 = np.mean(prcSoFar[:, -6:-1], axis=1)
-    deviation = sma5 - price_today
+    # === Z-score of deviation ===
+    signal = deviation / vol
 
-    # === Combine signals ===
-    hybrid_signal = 0.6 * momentum + 0.4 * (deviation / (sma5 + 1e-6))
+    # === Rank and select strongest signals ===
+    ranked = np.argsort(signal)  # ascending
+    long_idx = ranked[-5:]
+    short_idx = ranked[:5]
 
-    # === Volatility-adjusted scoring ===
-    log_returns = np.diff(np.log(prcSoFar[:, -6:]), axis=1)
-    vol = np.std(log_returns, axis=1) + 1e-6
-    signal_score = hybrid_signal / vol
-
-    # === Rank signals ===
-    ranked = np.argsort(signal_score)
-    top_long = ranked[-10:]
-    top_short = ranked[:10]
-
-    # === Allocate positions (risk-adjusted) ===
+    # === Allocate capital ===
     newPos = np.zeros(n)
-    max_budget = 10000  # hard limit
-    long_weights = signal_score[top_long] / np.sum(np.abs(signal_score[top_long]))
-    short_weights = signal_score[top_short] / np.sum(np.abs(signal_score[top_short]))
+    budget = 9500  # stay under $10k cap
 
-    for i, w in zip(top_long, long_weights):
-        exposure = min(max_budget, abs(w * max_budget))
-        newPos[i] = int(exposure / price_today[i])
-
-    for i, w in zip(top_short, short_weights):
-        exposure = min(max_budget, abs(w * max_budget))
-        newPos[i] = -int(exposure / price_today[i])
+    for i in long_idx:
+        newPos[i] = int(budget / price_today[i])
+    for i in short_idx:
+        newPos[i] = -int(budget / price_today[i])
 
     currentPos = newPos
     return currentPos
